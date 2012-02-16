@@ -40,9 +40,10 @@ module Roma
         @tmin = 100
         @num_of_threads = th_num
         @runnable = true
+        @num_of_finish = 0
       end
 
-      def start addr, port
+      def start addr, port, req="random_reqs"
         Thread.new {
           sleep_time=10
           while @runnable
@@ -57,12 +58,12 @@ module Roma
         working_threads = []
         @num_of_threads.times {
           working_threads << Thread.new {
-            send_random_reqs addr, port
+            send(req, addr, port)
           }
         }
       end
 
-      def send_random_reqs addr, port
+      def random_reqs addr, port
         rc = Roma::Client::RomaClient.new([ "#{addr}_#{port.to_s}" ])
         n=1000
         while @runnable
@@ -91,7 +92,46 @@ module Roma
       rescue => e
         p e
       end
-      private :send_random_reqs
+      private :random_reqs
+
+      def sequential_reqs addr, port
+        rc = Roma::Client::RomaClient.new([ "#{addr}_#{port.to_s}" ])
+        n = 1000
+        i = 0
+        while i < n && @runnable
+          begin
+            ts = DateTime.now
+            case @num_of_finish % 2
+            when 0
+              res = rc.set(i.to_s, 'hoge' + i.to_s)
+              #puts "set k=#{i} #{res}" if res==nil || res.chomp != 'STORED'
+              if res==nil || res.chomp != 'STORED'
+                puts "set k=#{i} #{res}"
+                @log.info "set k=#{i} #{res}"
+              end
+            when 1
+              res = rc.get(i.to_s)
+              #puts "get k=#{i} #{res}" if res == :error
+              if res == :error
+                puts "get k=#{i} #{res}"
+                @log.info "get k=#{i} #{res}"
+              end
+            end
+            t = (DateTime.now - ts).to_f * 86400.0
+            @tmax = t if t > @tmax
+            @tmin = t if t < @tmin
+            @cnt += 1
+            i += 1
+          rescue => e
+            p e
+          end
+        end
+        @num_of_finish += 1
+      rescue => e
+        p e
+      end
+      private :sequential_reqs
+
     end
 
     class Scenario
@@ -109,9 +149,15 @@ module Roma
 
       def init_roma
         @log.debug "begin init_roma"
-        exec "rm -f localhost_1121?.*"
+        clean_file
         exec "bin/mkroute -d 7 #{RomaProc.to_str(@roma_procs)} --enabled_repeathost"
         @log.debug "end init_roma"
+      end
+
+      def clean_file
+        @log.debug "begin clean_file"
+        exec "rm -f localhost_1121?.*"
+        @log.debug "end clean_file"
       end
 
       def start_roma
@@ -129,12 +175,18 @@ module Roma
         @roma_procs[i].pid = get_pid(str)
         @log.debug "end start_roma_proc"
       end
-      private :start_roma_proc
+
+      def join_roma_proc i, j
+        @log.debug "begin join_roma_proc"
+        str = "bin/romad #{@roma_procs[i].addr} -p #{@roma_procs[i].port.to_s} -j #{@roma_procs[j].addr}_#{@roma_procs[j].port.to_s} -d --enabled_repeathost"
+        exec str
+        @roma_procs[i].pid = get_pid(str)
+        @log.debug "end start_roma_proc"
+      end
 
       def exec cmd
         `cd #{@working_path}; #{cmd}`
       end
-      private :exec
 
       def get_pid reg_str
         open("| ps -ef | grep romad") { |f|
@@ -144,25 +196,27 @@ module Roma
         }
         nil
       end
-      private :get_pid
 
       def stop_roma
-        @log.debug "begin start_roma"
+        @log.debug "begin stop_roma"
         @roma_procs.length.times { |i|
           stop_roma_proc i
         }
-        @log.debug "end start_roma"
+        @log.debug "end stop_roma"
       end
 
       def stop_roma_proc i
-        @log.debug "begin start_roma_proc"
-        exec "kill -9 #{@roma_procs[i].pid}"
-        @log.debug "end start_roma_proc"
+        @log.debug "begin stop_roma_proc"
+        begin
+          exec "kill -9 #{@roma_procs[i].pid}"
+        rescue e
+          @log.error e
+        end
+        @log.debug "end stop_roma_proc"
       end
-      private :stop_roma_proc
 
-      def start_roma_client addr, port
-        @stress.start addr, port
+      def start_roma_client addr, port, req=nil
+        @stress.start addr, port, req
       end
 
       def stop_roma_client
@@ -204,124 +258,6 @@ module Roma
         }
         raise "not found a specified property: stats.run_acquire_vnodes"
       end
-
-      def test_kill_join_recover
-        @log.info "begin method test_kill_join_recover"
-
-        # initialize a ROMA
-        init_roma
-
-        # start a ROMA
-        start_roma
-
-        sleep 10
-
-        # stress 
-        start_roma_client @roma_procs[0].addr, @roma_procs[0].port
-
-        sleep 2
-
-        nlen = send_stats_routing_nodes_length @roma_procs[0].addr, @roma_procs[0].port
-        if nlen != 3
-          raise "fatal error nlen: #{nlen}"
-        end
-
-        sleep 2
-
-        # stop the specified roma process
-        stop_roma_proc 2
-
-        sleep 10
-
-        nlen = send_stats_routing_nodes_length @roma_procs[0].addr, @roma_procs[0].port
-        if nlen != 2
-          raise "fatal error nlen: #{nlen}"
-        end
-
-        #ret = send_stats_run_acquire_vnodes @roma_procs[0].addr, @roma_procs[0].port
-        #puts "$$ #{ret}"
-        #send_stats @roma_procs[0].addr, @roma_procs[0].port
-        #puts "$$"
-        #ret = send_stats_run_acquire_vnodes @roma_procs[0].addr, @roma_procs[0].port
-        #puts "$$ #{ret}"
-        #send_stats @roma_procs[0].addr, @roma_procs[0].port
-        #send_recover @roma_procs[0].addr, @roma_procs[0].port
-
-
-        sleep 2
-
-        stop_roma_client
-
-        #stop_roma
-        stop_roma_proc 0
-        stop_roma_proc 1
-
-        @log.info "end method test_kill_join_recover"
-      end
-
-      def test_suite
-        test_kill_join_recover
-      end
     end
-
-    class Config
-      attr_reader :number_of_nodes
-      attr_reader :port
-      attr_reader :hostname
-      attr_reader :working_path
-
-      def initialize(argv)
-        opts = OptionParser.new
-        opts.banner="usage:#{File.basename($0)} [options]"
-        
-        opts.on_tail("-h", "--help", "show this message") {
-          puts opts; exit
-        }
-        @number_of_nodes = 3
-        opts.on("-n N", "number of nodes[default: 3]", Integer) { |v|
-          @number_of_nodes = v
-        }
-
-        @working_path = '.'
-        opts.on("-p PATH", "working path[default: .]", String) { |v|
-          @working_path = v
-        }
-
-        @hostname = 'localhost'
-        opts.on("--hname HOSTNAME", "hostname[default: localhost]", String) { |v|
-          @hostname = v
-        }
-
-        @port = 11211
-        opts.on("--port PORT_NUMBER", "port number[default: 11211]", Integer) { |v|
-          @port = v
-        }
-
-        opts.parse!(argv)
-      rescue OptionParser::ParseError => e
-        $stderr.puts e.message
-        $stderr.puts opts.help
-        exit 1
-      end
-    end
-
   end
 end
-
-cnf = Roma::Test::Config.new(ARGV)
-
-# check for a working path
-unless File::exist?("#{cnf.working_path}/bin/romad")
-  # in invalid path
-  $stderr.puts "#{cnf.working_path}/bin/romad dose't found"
-  $stderr.puts "You should set to a working path option(-p)."
-  exit 1
-end
-
-procs = []
-cnf.number_of_nodes.times{ |i|
-  procs << Roma::Test::RomaProc.new(cnf.hostname, cnf.port + i)  
-}
-
-s = Roma::Test::Scenario.new(cnf.working_path, procs)
-s.test_suite

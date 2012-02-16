@@ -8,4 +8,69 @@ client_base_path = Pathname(__FILE__).dirname.parent.parent.parent.parent.expand
 $LOAD_PATH.unshift("#{client_base_path}/roma-ruby-client/lib")
 
 require 'roma/tools/test-scenario'
+include Roma::Test
 
+class Config
+  attr_reader :number_of_nodes, :port, :hostname, :working_path, :scenario
+  
+  def initialize(argv)
+    opts = OptionParser.new
+    opts.banner="usage:#{File.basename($0)} [options]"
+    @number_of_nodes = 3
+    @working_path = '.'
+    @hostname = 'localhost'
+    @port = 11211
+    @scenario = nil
+    
+    opts.on_tail("-h", "--help", "show this message") { puts opts; exit }
+    opts.on("-n N", "number of nodes[default: 3]", Integer) { |v| @number_of_nodes = v }
+    opts.on("-p PATH", "working path[default: .]", String) { |v| @working_path = v }
+    opts.on("--hname HOSTNAME", "hostname[default: localhost]", String) { |v| @hostname = v }
+    opts.on("--port PORT_NUMBER", "port number[default: 11211]", Integer) { |v| @port = v } 
+    opts.on("-s SCENARIO", "Filter scenario names.", String) { |v| @scenario = v }
+
+    opts.parse!(argv)
+  rescue OptionParser::ParseError => e
+    $stderr.puts e.message
+    $stderr.puts opts.help
+    exit 1
+  end
+end
+
+cnf = Config.new(ARGV)
+
+# check for a working path
+unless File::exist?("#{cnf.working_path}/bin/romad")
+  # in invalid path
+  $stderr.puts "#{cnf.working_path}/bin/romad dose't found"
+  $stderr.puts "You should set to a working path option(-p)."
+  exit 1
+end
+
+procs = []
+cnf.number_of_nodes.times{ |i|
+  procs << RomaProc.new(cnf.hostname, cnf.port + i)
+}
+def to_cname(s)
+  return unless s.to_s.length > 3
+  name = s.to_s.split("")
+  name[0].upcase!
+  cname = name[0..-4].join
+  cname
+end
+
+slist = Array.new
+if !cnf.scenario
+  Pathname.new("#{base_path}/server/test/scenarios/").each_child(with_directory = false) do |scenario|
+    slist << scenario
+  end
+else
+  slist << cnf.scenario
+end
+s = Scenario.new(cnf.working_path, procs)
+
+slist.each do |scenario|
+  require "#{base_path}/server/test/scenarios/#{scenario}"
+  cname = to_cname(scenario)
+  Object.const_get(cname).new(s)
+end
