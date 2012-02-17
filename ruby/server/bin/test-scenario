@@ -51,6 +51,7 @@ procs = []
 cnf.number_of_nodes.times{ |i|
   procs << RomaProc.new(cnf.hostname, cnf.port + i)
 }
+
 def to_cname(s)
   return unless s.to_s.length > 3
   name = s.to_s.split("")

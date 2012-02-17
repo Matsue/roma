@@ -32,6 +32,7 @@ module Roma
       attr :tmax
       attr :tmin
       attr :num_of_threads
+      attr_accessor :num_of_finish
       attr_accessor :runnable
 
       def initialize th_num
@@ -63,9 +64,18 @@ module Roma
         }
       end
 
-      def random_reqs addr, port
+      def single_start addr, port, n=1000, req="random_reqs"
+        ts = DateTime.now
+        send(req, addr, port, n)
+        t = (DateTime.now - ts).to_f * 86400.0
+        printf("qps=%d max=%f min=%f ave=%f\n", n / t , @tmax, @tmin, t / n.to_f)
+        @@cnt=0
+        @@tmax=0
+        @@tmin=100
+      end
+
+      def random_reqs addr, port, n=1000
         rc = Roma::Client::RomaClient.new([ "#{addr}_#{port.to_s}" ])
-        n=1000
         while @runnable
           begin 
             i = rand(n)
@@ -94,9 +104,8 @@ module Roma
       end
       private :random_reqs
 
-      def sequential_reqs addr, port
+      def sequential_reqs addr, port, n = 1000
         rc = Roma::Client::RomaClient.new([ "#{addr}_#{port.to_s}" ])
-        n = 1000
         i = 0
         while i < n && @runnable
           begin
@@ -156,8 +165,14 @@ module Roma
 
       def clean_file
         @log.debug "begin clean_file"
-        exec "rm -f localhost_1121?.*"
+        exec "rm -rf localhost_1121?*"
         @log.debug "end clean_file"
+      end
+
+      def clean_proc_file addr, port
+        @log.debug "begin clean_tc"
+        exec "rm -rf #{addr}_#{port}*"
+        @log.debug "end clean_tc"
       end
 
       def start_roma
@@ -223,6 +238,20 @@ module Roma
         @stress.runnable = false
       end
 
+      def single_start_roma_client addr, port, n, req=nil
+        @stress.single_start addr, port, n, req
+      end
+
+      def single_write_roma_client addr, port, n, req=nil
+        @stress.num_of_finish = 0
+        @stress.single_start addr, port, n, req
+      end
+
+      def single_read_roma_client addr, port, n, req=nil
+        @stress.num_of_finish = 1
+        @stress.single_start addr, port, n, req
+      end
+
       def send_recover addr, port
         commander = Roma::MultiCommander.new "#{addr}_#{port}"
         res = commander.send_cmd "recover", "#{addr}_#{port}"
@@ -244,7 +273,8 @@ module Roma
             return splited[i + 1].to_i
           end
         }
-        raise "not found a specified property: routing.nodes.length"
+        #raise "not found a specified property: routing.nodes.length"
+        nil
       end
       
       def send_stats_run_acquire_vnodes addr, port
@@ -256,7 +286,21 @@ module Roma
             return splited[i + 1] == "true"
           end
         }
-        raise "not found a specified property: stats.run_acquire_vnodes"
+        #raise "not found a specified property: stats.run_acquire_vnodes"
+        nil
+      end
+
+      def send_stats_run_recover addr, port
+        commander = Roma::MultiCommander.new "#{addr}_#{port}"
+        res = commander.send_cmd "stats stats.run_recover", "#{addr}_#{port}"
+        splited = res.split(' ')
+        splited.each_with_index { |w, i|
+          if w == "stats.run_recover"
+            return splited[i + 1] == "true"
+          end
+        }
+        #raise "not found a specified property: stats.run_recover"
+        nil
       end
     end
   end
