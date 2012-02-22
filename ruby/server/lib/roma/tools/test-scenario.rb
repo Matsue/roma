@@ -42,6 +42,7 @@ module Roma
         @num_of_threads = th_num
         @runnable = true
         @num_of_finish = 0
+        @log = Logger.new "./test-scenario-stress.log", "daily"
       end
 
       def start addr, port, req="random_reqs"
@@ -113,17 +114,16 @@ module Roma
             case @num_of_finish % 2
             when 0
               res = rc.set(i.to_s, 'hoge' + i.to_s)
-              #puts "set k=#{i} #{res}" if res==nil || res.chomp != 'STORED'
               if res==nil || res.chomp != 'STORED'
                 puts "set k=#{i} #{res}"
-                @log.info "set k=#{i} #{res}"
+                @log.warn "set k=#{i} #{res}"
+                redo
               end
             when 1
               res = rc.get(i.to_s)
-              #puts "get k=#{i} #{res}" if res == :error
-              if res == :error
+              if res == nil
                 puts "get k=#{i} #{res}"
-                @log.info "get k=#{i} #{res}"
+                @log.warn "get k=#{i} #{res}"
               end
             end
             t = (DateTime.now - ts).to_f * 86400.0
